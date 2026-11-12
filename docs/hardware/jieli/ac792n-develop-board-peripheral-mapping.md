@@ -1,6 +1,6 @@
 ---
 title: AC792N_Develop_Board Peripheral Mapping
-description: "AC792N_Develop_Board (AC792N / WL83) peripheral mapping — how its GPIO, ADC, UART, IIC, PWM, TIMER, SPI and MIPI-DSI pins correspond to Tuya TKL software ports, with the current TuyaOpen support state."
+description: "AC792N / WL83 fixed board pins, GPIO numbering and TKL-to-SDK peripheral mappings."
 keywords:
   - ac792n-develop-board
   - ac792n
@@ -8,212 +8,302 @@ keywords:
   - wl83
   - jieli
   - peripheral mapping
+  - pin mapping
   - tuyaopen hardware
   - tkl
+  - mipi-dsi
+  - camera
 ---
 
-This document describes the mapping between the AC792N_Develop_Board
-(AC792N / WL83) hardware peripherals and the Tuya TKL layer software peripheral
-ports.
+# AC792 / WL83 software peripheral mapping
 
-> The pin data here comes from the vendor SDK's board files and headers, **not
-> from a schematic**. No schematic ships with the repository, so whether a pin is
-> bonded out on the package, and whether the board already uses it for something
-> else, still has to be confirmed against the version-matched schematic. Items
-> marked "not registered" or "unverified" are not usable capabilities.
+How the AC792N_Develop_Board (AC792 / WL83) maps its pins to TKL: first the pins
+the board fixes at build time, then each peripheral. The numbers are what the TKL
+checks accept; whether a package bonds a pad out is a schematic question.
 
-## Pin naming and numbering
+**Verified on hardware (2026-11-11):** SPI, PWM, IIC (real SHT30 at 0x44) and the
+USER0 flash partition, with the shared `examples/peripherals/*`.
 
-JieLi names a pin `IO_PORT<port letter>_<number>`, and **that name is already a
-number**:
+## Board pins fixed at build time
 
-```c
-#define IO_GROUP_NUM  16
-#define IO_PORTA_07   (IO_GROUP_NUM * 0 + 7)    /* = 7  */
-#define IO_PORTD_07   (IO_GROUP_NUM * 3 + 7)    /* = 55 */
-```
+Written into the vendor SDK from `boards/JIELI/AC792N_Develop_Board/Kconfig` and
+`audio_config.h`; a project does not configure them again.
 
-Port A occupies 0–15, B 16–31, and so on — the same flat layout as Tuya's
-`TUYA_GPIO_NUM_E`. So **`PA7` is software pin `7`**.
+| Board Pin | Function | Notes |
+| --- | --- | --- |
+| PD1 / PE11 | Log UART0 TX / RX | 115200 8N1; `TCFG_UART0_TX_IO = TCFG_DEBUG_PORT = IO_PORTD_01`, baud rate from `CONFIG_JIELI_UART_LOG_BAUDRATE` |
+| HUSB DPB / DMB | USB device | Mass storage (download/upgrade) + optional CDC-ACM; `usb_role="host"` → `TCFG_HUSB_DEVICE` |
+| PB0 / PB1 | MIPI-DSI reset / backlight | ST7701S 480x800; the data lanes are fixed by the MIPI-DSI controller |
+| PC7 / PC6 / PC9 | MIC1 ADC0 P / N, bias MICBIASA | On-board differential electret input |
+| PC11 / PC12 / PC10 | MIC2 ADC1 P / N, bias MICBIASB | The channel actually captured (`JIELI_AUDIO_MIC_CHANNEL_MAP = AUDIO_ADC_MIC_1`); ADC0 stays closed |
+| PE15 | Audio PA mute | LTK5313 EN through an inverting transistor; `PA_MUTE_LEVEL=0` means mute is low and playback drives it high |
+| PD0 | Button K1, ADC0 channel 0 | ADKEY ladder, pressed range 0-96 |
 
-**ADC channels are a separate namespace**: `ADC_IO_CH_PD00` is channel 0, which
-is not the same numbering as the GPIO pin PD0.
+`JIELI_AUDIO_ADC_ALL_CHANNEL_OPEN=1` only lets the vendor ADC init every
+configured channel; the TKL capture path still maps MIC2 only. Opening both
+on-board microphones trips `audio_adc_mic_open ch err` and resets the board.
+
+`tkl_log_output` has two sinks, selected by `CONFIG_ENABLE_JIELI_USB_CDC_LOG`:
+
+- `n` (default) - vendor debug UART (`vprintf`), PD1 at 115200.
+- `y` - USB CDC-ACM (`cdc_write_data`, tries USB0 and USB1) on HUSB, shown as a
+  COM port on Windows. The port appears about two seconds in, so the early boot
+  log is lost.
 
 ## GPIO
 
-- Port widths are **not uniform** (from the masks in `asm/gpio.h`):
+- One flat numbering shared with TKL: `16 x port index + bit`.
+- WL83 ports are not contiguous; the ranges below are what the TKL check accepts.
+- Input, push-pull output and 10 kOhm pull-up/pull-down. No open-drain, no
+  both-edge or level-triggered interrupt; GPIO interrupts use per-pin EXTI.
 
-  | Port | Width | Pin range |
-  | ---- | ----- | --------- |
-  | A | 16 | 0–15 |
-  | B | 16 | 16–31 |
-  | C | **14** | 32–45 (PC14 / PC15 do not exist) |
-  | D | 16 | 48–63 |
-  | E | 16 | 64–79 |
-  | F | **6** | 80–85 |
-  | FUSB | 2 | 96 (DPA), 97 (DMA) |
-  | HUSB | 2 | 112 (DPB), 113 (DMB) |
+| Board Pin | Function | Software Pin | Software Port |
+| --- | --- | --- | --- |
+| PA0-PA15 | GPIO | TUYA_GPIO_NUM_0 - TUYA_GPIO_NUM_15 | / |
+| PB0-PB15 | GPIO | TUYA_GPIO_NUM_16 - TUYA_GPIO_NUM_31 | / |
+| PC0-PC13 | GPIO | TUYA_GPIO_NUM_32 - TUYA_GPIO_NUM_45 | / |
+| PD0-PD15 | GPIO | TUYA_GPIO_NUM_48 - TUYA_GPIO_NUM_63 | / |
+| PE0-PE15 | GPIO | TUYA_GPIO_NUM_64 - TUYA_GPIO_NUM_79 | / |
+| PF0-PF5 | GPIO | TUYA_GPIO_NUM_80 - TUYA_GPIO_NUM_85 | / |
+| FUSB DPA / DMA | GPIO | TUYA_GPIO_NUM_96 / 97 | / |
+| HUSB DPB / DMB | GPIO | TUYA_GPIO_NUM_112 / 113 | / |
 
-  So 46, 47, 86–95 and 98–111 are not valid pins; R (128/129) and V (144/145)
-  sit above `IO_MAX_NUM` and are outside this numbering.
-- Tuya's TKL GPIO numbering stops at `TUYA_GPIO_NUM_MAX` (64), so **only ports
-  A–D (pins 0–63) are reachable through TKL**.
-
-| Board pin | Function | Software pin | Software port |
-| --------- | -------- | ------------ | ------------- |
-| PA0 – PD15 | GPIO | `TUYA_GPIO_NUM_0` – `TUYA_GPIO_NUM_63` | / |
-
-### Interrupts
-
-- This chip has a real **per-pin external interrupt** (`exti_init`); the number
-  of pins is not limited by an event table.
-- Only **rising** and **falling** edges are supported; there is no both-edges or
-  level-triggered mode.
-- The TKL upper bound still applies: interrupts can only be registered for pins
-  0–63.
-
-### Electrical modes
-
-- Pull-up / pull-down: only the 10K tap is available (the vendor header marks
-  100K / 1M as unsupported on this part).
-- Open-drain output: not available; `tkl_gpio_init` returns
-  `OPRT_NOT_SUPPORTED`.
-
-## ADC
-
-- One ADC unit (`TUYA_ADC_NUM_0`), **10 bit**, 3.3 V reference.
-- 16 external analog channels:
-
-| Board pin | Software channel | Software port |
-| --------- | ---------------- | ------------- |
-| **PD0** | `ch_0` (**K1 button**) | `TUYA_ADC_NUM_0` |
-| PD1 | `ch_1` | `TUYA_ADC_NUM_0` |
-| PD6 | `ch_2` | `TUYA_ADC_NUM_0` |
-| PD7 | `ch_3` | `TUYA_ADC_NUM_0` |
-| PD8 | `ch_4` | `TUYA_ADC_NUM_0` |
-| PD9 | `ch_5` | `TUYA_ADC_NUM_0` |
-| PD10 | `ch_6` | `TUYA_ADC_NUM_0` |
-| PE4 | `ch_7` | `TUYA_ADC_NUM_0` |
-| PE5 | `ch_8` | `TUYA_ADC_NUM_0` |
-| PE6 | `ch_9` | `TUYA_ADC_NUM_0` |
-| PE7 | `ch_10` | `TUYA_ADC_NUM_0` |
-| PE8 | `ch_11` | `TUYA_ADC_NUM_0` |
-| PE9 | `ch_12` | `TUYA_ADC_NUM_0` |
-| PC13 | `ch_13` | `TUYA_ADC_NUM_0` |
-| DP | `ch_14` | `TUYA_ADC_NUM_0` |
-| DM | `ch_15` | `TUYA_ADC_NUM_0` |
-
-- The on-board K1 button sits on the **PD0 (ADC channel 0)** resistor ladder,
-  with a pressed range of 0–96 raw.
-- PD1 is also the log UART TX pin, so PD0/PD1 should not be repurposed as plain
-  GPIO.
-- Temperature and `tkl_adc_ioctl` are not implemented and return
-  `OPRT_NOT_SUPPORTED`.
+PC14 / PC15 and PF6-PF15 do not exist on WL83.
 
 ## UART
 
-- The log port is **SDK UART0: TX = PD1, RX = PE11**.
-- **This board has no separate service UART** (`JIELI_BOARD_HAS_SERVICE_UART =
-  n`), so **TAL CLI and logging share the same `uart0`** — console output and CLI
-  input go through one physical port.
-- The baud rate comes from `CONFIG_JIELI_UART_LOG_BAUDRATE`; the default is
-  **115200** (the vendor header's 1000000 is rewritten during staging).
-- TKL logical `TUYA_UART_NUM_0` maps to SDK `uart0`; logical `TUYA_UART_NUM_1`
-  maps to SDK `uart2`, but **`uart2` is not registered by the current board
-  profile** (`TCFG_UART2_ENABLE` is only defined under
-  `USE_UART_DEVICE_TEST_DEMO`), so logical UART1 is unavailable at run time.
+- TKL UART0 maps to SDK `uart0`; TKL UART1 maps to SDK `uart2`, not SDK UART1.
+- 8N1, non-zero baud rate, no flow control.
+- WL83 is a per-pin crossbar, so one `tkl_io_pinmux_config()` call per pin, with
+  flat pin numbers.
+- The log console pins are a board fact in the vendor `board.c`: change the board
+  Kconfig for those, not the pinmux API.
 
-| Board pin | Function | Software pin | Software port |
-| --------- | -------- | ------------ | ------------- |
-| PD1 | UART0_TX (log + CLI) | `TUYA_UART0_TX` | `TUYA_UART_NUM_0` |
-| PE11 | UART0_RX (log + CLI) | `TUYA_UART0_RX` | `TUYA_UART_NUM_0` |
+| Board Pin | Function | Software Pin | Software Port |
+| --- | --- | --- | --- |
+| PD1 / PE11 (default) | UART0 TX / RX, log console | TUYA_UART0_TX / RX | TUYA_UART_NUM_0 |
+| PB4 / PB5 (default) | UART1 TX / RX, SDK `uart2` (J26 header) | TUYA_UART1_TX / RX | TUYA_UART_NUM_1 |
 
-- **PE11 = 75, which is outside the TKL GPIO range 0–63**, so it can only be
-  configured on the vendor side and is not reachable through `tkl_gpio_*`.
-- Receive is driven by the vendor's interrupt event callback: the ISR only posts
-  a semaphore and a task performs `dev_read`.
-- TX interrupt, hardware flow control, `tkl_uart_wait_for_data` and
-  `tkl_uart_ioctl` are not implemented.
+```c
+tkl_io_pinmux_config(49, TUYA_UART0_TX);   /* TX -> PD1  */
+tkl_io_pinmux_config(75, TUYA_UART0_RX);   /* RX -> PE11 */
+tkl_io_pinmux_config(50, TUYA_UART1_TX);   /* TKL UART1 -> SDK uart2 */
+tkl_io_pinmux_config(51, TUYA_UART1_RX);
+```
 
 ## IIC
 
-- The chip provides hardware IIC and software-emulated IIC. The vendor
-  `demo_hello` board file defines three buses, **all behind
-  `USE_IIC_TEST_DEMO`, which is off**:
+- Hardware IIC0 / IIC1 support host mode and 7-bit addresses at 100 kHz, 400 kHz
+  and 1 MHz; 3.4 MHz is not supported.
+- IIC2 is software (bit-banged) with fixed timing (`sw_iic_delay=80`); the speed
+  requested through TKL has no effect, so use low-speed devices only.
+- All three ports are registered by the adapter and do not depend on the vendor
+  `USE_IIC_TEST_DEMO`.
+- Board defaults live in `JIELI_BOARD_IICn_*_PIN`; the platform stages them into
+  `tuya_board_periph_config.h`, so no C edit is needed.
 
-| Device | Type | Board pins |
-| ------ | ---- | ---------- |
-| `iic0` | hardware IIC | SCL PA4, SDA PA5 |
-| `iic1` | hardware IIC | SCL PA6, SDA PA7 |
-| `iic2` | software IIC | SCL PA6, SDA PA7 |
+| Board Pin | Function | Software Pin | Software Port |
+| --- | --- | --- | --- |
+| PA4 (default) | IIC0 SCL, hardware | TUYA_IIC0_SCL | TUYA_I2C_NUM_0 |
+| PA5 (default) | IIC0 SDA, hardware | TUYA_IIC0_SDA | TUYA_I2C_NUM_0 |
+| PA6 (default) | IIC1 SCL, hardware | TUYA_IIC1_SCL | TUYA_I2C_NUM_1 |
+| PA7 (default) | IIC1 SDA, hardware | TUYA_IIC1_SDA | TUYA_I2C_NUM_1 |
+| PA2 (default) | IIC2 SCL, software | TUYA_IIC2_SCL | TUYA_I2C_NUM_2 |
+| PA3 (default) | IIC2 SDA, software | TUYA_IIC2_SDA | TUYA_I2C_NUM_2 |
 
-> **Current state: not registered**, so `tkl_i2c_init` returns
-> `OPRT_NOT_SUPPORTED` at run time and `ENABLE_I2C` is undeclared. Enabling it
-> requires registering the device in the board profile with pins confirmed
-> against the schematic.
+The hardware ports sit on the crossbar, so a run-time request overrides the board
+default (the adapter re-applies it after `dev_open()`):
 
-## PWM
+```c
+tkl_io_pinmux_config(4, TUYA_IIC0_SCL);   /* SCL -> PA4 */
+tkl_io_pinmux_config(5, TUYA_IIC0_SDA);   /* SDA -> PA5 */
+```
 
-- The vendor board file defines `pwm1`, **behind `USE_PWM_TEST_DEMO`, which is
-  off**:
-  - timer-PWM remap pin: PA4 (TIMER2)
-  - MCPWM channels: all `-1` (unused)
-- This chip supports **multi-channel** PWM (each channel's pin is fixed in the
-  board's remap table).
+The software IIC2 has no crossbar route and can only be moved through the board
+config.
 
-> **Current state: not registered**; `ENABLE_PWM` is undeclared.
+## ADC
 
-## TIMER
+`ch` is the sequential index returned by the TKL pin-to-function lookup, not an
+arbitrary SDK channel number. ADC0, 10 bit, external scan sampling only; the SDK
+samples at most 8 channels per request.
 
-- The TKL timer is built on the vendor's microsecond timer service; it needs **no
-  board registration and no pin**.
-- Callbacks run in the SDK's timer **task**, not in the interrupt
-  (`call_in_irq = 0`), so a callback may safely stop or deinit its own timer. The
-  cost is that callback latency is a scheduler tick.
-- `tkl_timer_get` returns microseconds elapsed since the timer was started.
+| Board Pin | Function | Software Pin | Software Port |
+| --- | --- | --- | --- |
+| PD0 | ADC0 ch0 (`ADC_IO_CH_PD00`) | TUYA_ADC0 | TUYA_ADC_NUM_0 |
+| PD1 | ADC0 ch1 (`ADC_IO_CH_PD01`) | TUYA_ADC0 | TUYA_ADC_NUM_0 |
+| PD6 | ADC0 ch2 (`ADC_IO_CH_PD06`) | TUYA_ADC0 | TUYA_ADC_NUM_0 |
+| PD7 | ADC0 ch3 (`ADC_IO_CH_PD07`) | TUYA_ADC0 | TUYA_ADC_NUM_0 |
+| PD8 | ADC0 ch4 (`ADC_IO_CH_PD08`) | TUYA_ADC0 | TUYA_ADC_NUM_0 |
+| PD9 | ADC0 ch5 (`ADC_IO_CH_PD09`) | TUYA_ADC0 | TUYA_ADC_NUM_0 |
+| PD10 | ADC0 ch6 (`ADC_IO_CH_PD10`) | TUYA_ADC0 | TUYA_ADC_NUM_0 |
+| PE4 | ADC0 ch7 (`ADC_IO_CH_PE04`) | TUYA_ADC0 | TUYA_ADC_NUM_0 |
+| PE5 | ADC0 ch8 (`ADC_IO_CH_PE05`) | TUYA_ADC0 | TUYA_ADC_NUM_0 |
+| PE6 | ADC0 ch9 (`ADC_IO_CH_PE06`) | TUYA_ADC0 | TUYA_ADC_NUM_0 |
+| PE7 | ADC0 ch10 (`ADC_IO_CH_PE07`) | TUYA_ADC0 | TUYA_ADC_NUM_0 |
+| PE8 | ADC0 ch11 (`ADC_IO_CH_PE08`) | TUYA_ADC0 | TUYA_ADC_NUM_0 |
+| PE9 | ADC0 ch12 (`ADC_IO_CH_PE09`) | TUYA_ADC0 | TUYA_ADC_NUM_0 |
+| PC13 | ADC0 ch13 (`ADC_IO_CH_PC13`) | TUYA_ADC0 | TUYA_ADC_NUM_0 |
+| FUSB DPA | ADC0 ch14 (`ADC_IO_CH_DP`) | TUYA_ADC0 | TUYA_ADC_NUM_0 |
+| HUSB DPB | ADC0 ch15 (`ADC_IO_CH_DM`) | TUYA_ADC0 | TUYA_ADC_NUM_0 |
+
+**Changing the pins**: configure the pad as GPADC, then read it with the
+sequential index `tkl_io_pin_to_func()` returns.
+
+```c
+tkl_io_pinmux_config(48, TUYA_ADC0);   /* PD0 -> ADC channel 0 */
+```
 
 ## SPI
 
-- Three SPI controllers. The vendor board file defines `spi1` / `spi2`, **both
-  behind their `USE_SPI_*_TEST_DEMO` switch, which is off**.
-- `spi1` (master example): CLK PA4, DO PA5, DI PA6, CS `-1` (software driven).
+- Three controllers (SPI0 / SPI1 / SPI2), all registered by the adapter and
+  independent: `tkl_spi_init(port, ...)` picks one, and the stock
+  `peripherals/spi` example selects it with `CONFIG_EXAMPLE_SPI_PORT`.
+- Master only, 8-bit, mode 0. The rate is set at init through
+  `IOCTL_SPI_SET_BAUDRATE`.
+- The vendor path clocks MSB first; `TUYA_SPI_ORDER_LSB2MSB` is done in software.
+- CS is caller-managed: the SPI controller has no chip-select register, so there
+  is no hardware CS at all. The driver never asserts one around `dev_write` /
+  `dev_read`; its `IOCTL_SPI_SET_CS_STATUS` drives a GPIO for you but the TKL
+  layer does not use it, and the TKL API has no CS argument.
+- The pins are a true crossbar: peripheral inputs go through per-signal
+  selector registers (`FI_SPIx_*`) and outputs through the per-pin function mux,
+  so any pin that exists on the package can carry CLK / DO / DI. Limits: a
+  signal has exactly one route at a time, only CLK / DO / DI are muxed (no
+  d2/d3, so single-lane only), and a pin the SDK cannot give to that function
+  fails `gpio_enable_function()` - the adapter reports `OPRT_NOT_SUPPORTED`.
+- PA2-PA7 belong to the IIC adapter, PB4/PB5 are the UART1 pads and PB8-PB13
+  carry the MCPWM channels, so the defaults below avoid them.
 
-> **Current state: not registered**; `ENABLE_SPI` is undeclared.
->
-> The adapter implements **synchronous** master transfers (8-bit, MSB first).
-> Slave mode, interrupt completion callbacks, status queries and ioctl all return
-> `OPRT_NOT_SUPPORTED`.
+| Board Pin | Function | Software Pin | Software Port |
+| --- | --- | --- | --- |
+| PC3 (default) | SPI0 CLK | TUYA_SPI0_CLK | TUYA_SPI_NUM_0 |
+| PC4 (default) | SPI0 DO / MOSI | TUYA_SPI0_MOSI | TUYA_SPI_NUM_0 |
+| PC5 (default) | SPI0 DI / MISO | TUYA_SPI0_MISO | TUYA_SPI_NUM_0 |
+| PC0 (default) | SPI1 CLK | TUYA_SPI1_CLK | TUYA_SPI_NUM_1 |
+| PC1 (default) | SPI1 DO / MOSI | TUYA_SPI1_MOSI | TUYA_SPI_NUM_1 |
+| PC2 (default) | SPI1 DI / MISO | TUYA_SPI1_MISO | TUYA_SPI_NUM_1 |
+| PD2 (default) | SPI2 CLK | TUYA_SPI2_CLK | TUYA_SPI_NUM_2 |
+| PD3 (default) | SPI2 DO / MOSI | TUYA_SPI2_MOSI | TUYA_SPI_NUM_2 |
+| PD4 (default) | SPI2 DI / MISO | TUYA_SPI2_MISO | TUYA_SPI_NUM_2 |
 
-## MIPI-DSI display
+WL83 has a per-pin crossbar, so a run-time request works if it comes before the
+`tkl_spi_init()` of that port; the call only records the request and the vendor
+driver muxes during `dev_open()`. Moving pins on an open bus needs
+`tkl_spi_deinit()` first.
 
-- The board carries a MIPI-DSI panel, model `MIPI_480x800_ST7701S`.
-- Board control pins: reset `PB0`, backlight `PB1` (from the board facts).
-- This path is used by the display TDD and **does not go through the GPIO/SPI TKL
-  interfaces**.
+```c
+tkl_io_pinmux_config(10, TUYA_SPI0_CLK);    /* PA10 as SPI0 CLK */
+tkl_io_pinmux_config(11, TUYA_SPI0_MOSI);
+tkl_io_pinmux_config(12, TUYA_SPI0_MISO);
+tkl_spi_init(TUYA_SPI_NUM_0, &cfg);
+```
 
-## Resources already in use on this board
+**Changing the pins permanently**: edit `JIELI_BOARD_SPIn_CLK_PIN` / `_DO_PIN` /
+`_DI_PIN` (one block per controller) in `boards/JIELI/AC792N_Develop_Board/Kconfig`;
+the platform stages them into `tuya_board_periph_config.h` and the adapter builds
+its platform data from them.
 
-Avoid these when adding a peripheral:
+## PWM
 
-| Pin | Use |
+- WL83 uses MCPWM. The adapter registers `pwm1` with four channels, each on a
+  complementary H/L pin pair remapped through the crossbar.
+- PWM4-PWM11 and PWM capture are not supported.
+- `duty` is taken against `cycle`; `cycle == 0` is treated as 10000.
+
+| Board Pin | Function | Software Pin | Software Port |
+| --- | --- | --- | --- |
+| PB8 / PB9 | PWM0, MCPWM CH0 H / L | TUYA_PWM0 | TUYA_PWM_NUM_0 |
+| PA8 / PA10 | PWM1, MCPWM CH1 H / L | TUYA_PWM1 | TUYA_PWM_NUM_1 |
+| PB10 / PB11 | PWM2, MCPWM CH2 H / L | TUYA_PWM2 | TUYA_PWM_NUM_2 |
+| PB12 / PB13 | PWM3, MCPWM CH3 H / L | TUYA_PWM3 | TUYA_PWM_NUM_3 |
+
+A TKL channel is a complementary pair while `TUYA_PWMn` names one pin, so the
+semantics do not line up and run-time `tkl_io_pinmux_config()` is not supported
+for PWM. Change `JIELI_BOARD_PWMn_H_PIN` / `_L_PIN` in the board Kconfig instead:
+the platform stages them into `tuya_board_periph_config.h` and they initialise
+`s_pwm1_pd.mcpwm_port[]` (first four entries H, last four L).
+
+## TIMER
+
+| TKL Timer | Behaviour |
 | --- | --- |
-| PD1 | Log output (SDK UART0 TX) |
-| PE11 | Log / CLI input (SDK UART0 RX) |
-| PD0 | K1 button (ADC channel 0) |
-| PB0 | Display reset |
-| PB1 | Display backlight |
-| PA4 / PA5 / PA6 / PA7 | Declared as IIC / PWM / SPI in vendor examples (not registered, not checked against a schematic) |
+| TIMER0 - TIMER5 | Software logical numbers sharing the SDK microsecond timer service, not independent hardware timers |
+| Concurrency | One active timer at a time; a second concurrent start returns `OPRT_RESOURCE_NOT_READY` |
+| Callback | Runs in the SDK timer task (`call_in_irq=0`), not a hardware ISR |
 
-## Current TuyaOpen support state
+## Flash
 
-| Peripheral | TKL implementation | Capability declared | Usable at run time |
-| ---------- | ------------------ | ------------------- | ------------------ |
-| GPIO (incl. IRQ, pulls) | yes | `ENABLE_GPIO` | yes (0–63; PC14/PC15 do not exist) |
-| ADC | yes | `ENABLE_ADC` | yes (ADC0, 10 bit, 16 channels) |
-| UART | yes | `ENABLE_UART` | yes (logical UART0 = uart0, PD1 / PE11; logical UART1 not registered) |
-| TIMER | yes | `ENABLE_TIMER` | yes |
-| IIC | yes | not declared | **no**: no device registered by the board |
-| PWM | yes | not declared | **no**: no device registered by the board |
-| SPI | yes | not declared | **no**: no device registered by the board |
-| MIPI-DSI | yes (this chip only) | declared through board display facts | yes (not exposed through TKL peripheral APIs) |
-| pinmux | yes (this chip only) | not declared | implemented but undeclared: `ENABLE_PINMUX` has no chip dimension, so declaring it would misrepresent wl82 |
+The 8 MiB flash is laid out by the vendor flasher (`isd_config.ini`). The
+TuyaOpen area stays at `TUYAOPEN_ADR=0x300000` (`TUYAOPEN_LEN=0x0D1000`,
+`OPT=1`), so a download or OTA never erases it.
+
+`CONFIG_JIELI_BOARD_DUAL_BANK` is on by default in the board Kconfig. It adds
+`CONFIG_DOUBLE_BANK_ENABLE` and `CONFIG_SUPPORT_DOUBLE_UBOOT` to the staged
+vendor `app_config.h`; the flasher then emits `DB_UPDATE_DATA=YES`,
+`UBOOT_AREA_SIZE=64K,64K` and places the 32 KiB VM itself:
+
+| Region | Range | Size | Use |
+| --- | --- | --- | --- |
+| Boot image | 0x000000-0x020000 | 128 KiB | two 64 KiB `uboot.boot` copies |
+| App bank 0 | 0x020000-0x18C000 | 1.42 MiB | running image, code at 0x020020 |
+| App bank 1 | 0x18C000-0x2F8000 | 1.42 MiB | OTA target, code at 0x18C020 |
+| VM | 0x2F8000-0x300000 | 32 KiB | vendor VM, auto-placed below TuyaOpen |
+| TuyaOpen | 0x300000-0x3D1000 | 836 KiB | the five partitions below |
+| BTIF | 0x3D1000-0x3D2000 | 4 KiB | vendor BT interface |
+| USER | 0x3D2000-0x3D3000 | 4 KiB | vendor customer reserve |
+| Free | 0x3D3000-0x800000 | 4.18 MiB | unused |
+
+Each bank opens with a 32-byte header (image CRC, code length) followed by the
+code, which is why `get_current_boot_info()` reports a base address 0x20 past
+the bank start; `get_backup_area_info()` on the running image returns
+0x18C020 / 0x16BFE0.
+
+`tkl_flash` exposes five partitions inside the TuyaOpen area; erase and write
+outside them return `OPRT_INVALID_PARM`:
+
+| Partition | Range | Size | Use |
+| --- | --- | --- | --- |
+| KV_KEY | 0x300000-0x301000 | 4 KiB | TuyaOpen KV index |
+| KV_DATA | 0x301000-0x311000 | 64 KiB | TuyaOpen KV data |
+| UF | 0x311000-0x391000 | 512 KiB | user file area |
+| RCD | 0x391000-0x3C1000 | 192 KiB | not used by the tree |
+| USER0 | 0x3C1000-0x3D1000 | 64 KiB | general purpose, block 4096 |
+
+Upgrades:
+
+- **`tkl_ota` drives the vendor dual-bank engine.** `tkl_ota_start_notify()`
+  lifts the flash write protection, calls `dual_bank_passive_update_init()` and
+  `dual_bank_update_allow_check()`; `tkl_ota_data_process()` feeds
+  `dual_bank_update_write()` in at most 4 KiB chunks (the size the engine
+  reports); `tkl_ota_end_notify()` runs `dual_bank_update_verify()` and, when
+  the read-back CRC matches, `dual_bank_update_burn_boot_info()` and reboots
+  into the new bank. `tkl_ota_get_ability()` reports `TUYA_OTA_FULL` with a
+  0xF0000 ceiling.
+- **The engine needs its `dw_update` task.**
+  `dual_bank_passive_update_init()` creates that task by name, so
+  `platform/JIELI/tuyaos/entry/jieli_app_entry.c` declares it under
+  `CONFIG_DOUBLE_BANK_ENABLE`; without the row OTA start fails with -112.
+- **The payload is a vendor OTA package.** It starts with an `update_data`
+  wrapper head and a directory of per-file heads (`app_area`, `uboot_core`, ...)
+  whose CRC fields the vendor tool computes at build time. A byte copy of the
+  running bank is rejected at the head directory, so bench checks cover the
+  engine handshake (init, `allow_check`, head parsing) and the write path,
+  while the complete bank switch needs an image from the vendor OTA flow.
+- Turning the board option off brings back the single-bank map
+  (0x000000-0x07F000 boot, 0x07F000-0x300000 application) and a stub-free but
+  unused OTA path.
+
+The free area after USER is vendor headroom - nothing allocates it today. It
+would be the natural home for a larger UF if that is ever needed, but enlarging
+the TuyaOpen area means changing `TUYAOPEN_ADR`/`TUYAOPEN_LEN` and migrating
+whatever the KV and UF partitions already hold.
+
+## Other peripherals
+
+| Peripheral | Status |
+| --- | --- |
+| USB device (HUSB) | Mass storage + optional CDC-ACM; `tos.py flash` downloads over this port |
+| MIPI-DSI | ST7701S 480x800, TDD / TDL adapted |
+| DVP / MIPI CSI2 camera | Adapted in platform PR #23, not merged yet |
+| Watchdog / RTC / touch / QSPI | Not implemented in TKL |
