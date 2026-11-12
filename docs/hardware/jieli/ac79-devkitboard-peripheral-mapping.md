@@ -217,17 +217,16 @@ The 8 MiB flash is laid out by the vendor flasher (`isd_config.ini`); the
 TuyaOpen area is declared there as `TUYAOPEN_ADR=0x300000`,
 `TUYAOPEN_LEN=0x0D1000`, `OPT=1`, so a download or OTA never erases it.
 
-`CONFIG_JIELI_BOARD_DUAL_BANK` is on by default in the board Kconfig, which
-adds `CONFIG_DOUBLE_BANK_ENABLE` and `CONFIG_SUPPORT_DOUBLE_UBOOT` to the staged
-vendor `app_config.h`. The flasher then emits `DB_UPDATE_DATA=YES`,
-`UBOOT_AREA_SIZE=64K,64K`, splits the vendor application area into two banks
-and auto-places the 32 KiB VM just below 0x300000; TuyaOpen does not move. On
-the AC792N the resulting map is measured as two 64 KiB uboot copies
-(0x000000-0x020000), bank 0 0x020000-0x18C000, bank 1 0x18C000-0x2F8000 and VM
-0x2F8000-0x300000. The AC79 boundaries come from the same flasher rule - read
-them from the flasher's `FLASH INFO` output on the first dual-bank download.
+`CONFIG_JIELI_BOARD_DUAL_BANK` is off by default on this board, so the
+single-bank map below is what a download produces today. Turning it on stages
+`CONFIG_DOUBLE_BANK_ENABLE` and `CONFIG_SUPPORT_DOUBLE_UBOOT` into the vendor
+`app_config.h`; the flasher then emits `DB_UPDATE_DATA=YES`,
+`UBOOT_AREA_SIZE=64K,64K`, lays out two 64 KiB uboot copies, two application
+banks and a 32 KiB VM just below 0x300000, and TuyaOpen does not move. The AC792N
+page carries the measured numbers for that layout; on the AC79 read them from the
+flasher's `FLASH INFO` output the first time it is enabled.
 
-With the board option off, the single-bank map applies:
+Single-bank map (default):
 
 | Region | Range | Size | Use |
 | --- | --- | --- | --- |
@@ -251,13 +250,15 @@ outside them return `OPRT_INVALID_PARM`:
 
 Upgrades:
 
-- **`tkl_ota` drives the vendor dual-bank engine.** `tkl_ota_start_notify()`
-  lifts the flash write protection, calls `dual_bank_passive_update_init()` and
-  `dual_bank_update_allow_check()`; `tkl_ota_data_process()` feeds
-  `dual_bank_update_write()` in at most 4 KiB chunks; `tkl_ota_end_notify()`
-  runs `dual_bank_update_verify()` and, when the read-back CRC matches,
-  `dual_bank_update_burn_boot_info()` and reboots into the new bank.
-  `tkl_ota_get_ability()` reports `TUYA_OTA_FULL` with a 0xF0000 ceiling.
+- **`tkl_ota` drives the vendor dual-bank engine** once
+  `CONFIG_JIELI_BOARD_DUAL_BANK` is on (off by default here, see above).
+  `tkl_ota_start_notify()` lifts the flash write protection, calls
+  `dual_bank_passive_update_init()` and `dual_bank_update_allow_check()`;
+  `tkl_ota_data_process()` feeds `dual_bank_update_write()` in at most 4 KiB
+  chunks; `tkl_ota_end_notify()` runs `dual_bank_update_verify()` and, when the
+  read-back CRC matches, `dual_bank_update_burn_boot_info()` and reboots into
+  the new bank. `tkl_ota_get_ability()` reports `TUYA_OTA_FULL` with a 0xF0000
+  ceiling.
 - **The engine needs its `dw_update` task.** It is declared in
   `platform/JIELI/tuyaos/entry/jieli_app_entry.c` under
   `CONFIG_DOUBLE_BANK_ENABLE`; without the row OTA start fails with -112.

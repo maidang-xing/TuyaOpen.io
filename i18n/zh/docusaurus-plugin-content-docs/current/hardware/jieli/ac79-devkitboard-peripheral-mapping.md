@@ -203,15 +203,14 @@ WL82 的 pinmux 没有 PWM 通路，`tkl_io_pinmux_config()` 无法在运行时�
 整片 8 MiB flash 由厂商烧录工具按 `isd_config.ini` 划分；其中 TuyaOpen 区声明为
 `TUYAOPEN_ADR=0x300000`、`TUYAOPEN_LEN=0x0D1000`、`OPT=1`，下载或 OTA 都不会擦除它。
 
-板级 Kconfig 里 `CONFIG_JIELI_BOARD_DUAL_BANK` 默认打开，会往暂存的厂商
-`app_config.h` 写入 `CONFIG_DOUBLE_BANK_ENABLE` 和 `CONFIG_SUPPORT_DOUBLE_UBOOT`。
-烧录工具随之输出 `DB_UPDATE_DATA=YES`、`UBOOT_AREA_SIZE=64K,64K`，把厂商应用区切成
-两个 bank，并把 32 KiB 的 VM 自动放到 0x300000 之前；TuyaOpen 区不动。AC792N 上实测
-的结果是两份 64 KiB uboot（0x000000-0x020000）、bank 0 0x020000-0x18C000、
-bank 1 0x18C000-0x2F8000、VM 0x2F8000-0x300000；AC79 的边界来自同一套规则，第一次
-双备份下载时以烧录工具打印的 `FLASH INFO` 为准。
+板级 Kconfig 里 `CONFIG_JIELI_BOARD_DUAL_BANK` 在这块板上默认关闭，所以现在下载得到的
+就是下面的单备份布局。打开它才会往暂存的厂商 `app_config.h` 写入
+`CONFIG_DOUBLE_BANK_ENABLE` 和 `CONFIG_SUPPORT_DOUBLE_UBOOT`，烧录工具随之输出
+`DB_UPDATE_DATA=YES`、`UBOOT_AREA_SIZE=64K,64K`，排两份 64 KiB uboot、两个应用 bank，
+并把 32 KiB 的 VM 放到 0x300000 之前，TuyaOpen 区不动。AC792N 页面上有该布局的实测
+地址；AC79 第一次打开时以烧录工具打印的 `FLASH INFO` 为准。
 
-关掉板级选项时是单备份布局：
+单备份布局（默认）：
 
 | 区域 | 地址范围 | 大小 | 用途 |
 | --- | --- | --- | --- |
@@ -234,7 +233,8 @@ bank 1 0x18C000-0x2F8000、VM 0x2F8000-0x300000；AC79 的边界来自同一套�
 
 升级相关：
 
-- **`tkl_ota` 走的是厂商双备份引擎**：`tkl_ota_start_notify()` 解除 flash 写保护，
+- **`tkl_ota` 走的是厂商双备份引擎**（需要先打开上面的
+  `CONFIG_JIELI_BOARD_DUAL_BANK`）：`tkl_ota_start_notify()` 解除 flash 写保护，
   调 `dual_bank_passive_update_init()` 和 `dual_bank_update_allow_check()`；
   `tkl_ota_data_process()` 按不超过 4 KiB 的块调 `dual_bank_update_write()`；
   `tkl_ota_end_notify()` 调 `dual_bank_update_verify()`，回读 CRC 一致后调
