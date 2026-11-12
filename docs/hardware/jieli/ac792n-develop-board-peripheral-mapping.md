@@ -238,10 +238,25 @@ The 8 MiB flash is laid out by the vendor flasher (`isd_config.ini`). The
 TuyaOpen area stays at `TUYAOPEN_ADR=0x300000` (`TUYAOPEN_LEN=0x0D1000`,
 `OPT=1`), so a download or OTA never erases it.
 
-`CONFIG_JIELI_BOARD_DUAL_BANK` is on by default in the board Kconfig. It adds
-`CONFIG_DOUBLE_BANK_ENABLE` and `CONFIG_SUPPORT_DOUBLE_UBOOT` to the staged
-vendor `app_config.h`; the flasher then emits `DB_UPDATE_DATA=YES`,
-`UBOOT_AREA_SIZE=64K,64K` and places the 32 KiB VM itself:
+`CONFIG_JIELI_BOARD_DUAL_BANK` is off by default, so a download produces the
+single-bank map. It stays off because the A/B layout halves the application
+area to 1.42 MiB and the chat bot demo alone is 2.46 MiB of code.
+
+Single-bank map (default):
+
+| Region | Range | Size | Use |
+| --- | --- | --- | --- |
+| Boot image | 0x000000-0x07F000 | 508 KiB | vendor `uboot.boot` and boot arguments (`FLASH_BIN_SIZE`) |
+| Application | 0x07F000-0x300000 | 2.5 MiB | code and resources (`LAVE_SIZE` 0x279000 inside the area) |
+| TuyaOpen | 0x300000-0x3D1000 | 836 KiB | the five partitions below |
+| BTIF | 0x3D1000-0x3D2000 | 4 KiB | vendor BT interface |
+| USER | 0x3D2000-0x3D3000 | 4 KiB | vendor customer reserve |
+| Free | 0x3D3000-0x800000 | 4.18 MiB | unused |
+
+Turning `CONFIG_JIELI_BOARD_DUAL_BANK` on stages `CONFIG_DOUBLE_BANK_ENABLE` and
+`CONFIG_SUPPORT_DOUBLE_UBOOT` into the vendor `app_config.h`; the flasher then
+emits `DB_UPDATE_DATA=YES`, `UBOOT_AREA_SIZE=64K,64K` and lays out the A/B map
+below, which is what this board was measured with:
 
 | Region | Range | Size | Use |
 | --- | --- | --- | --- |
@@ -249,15 +264,12 @@ vendor `app_config.h`; the flasher then emits `DB_UPDATE_DATA=YES`,
 | App bank 0 | 0x020000-0x18C000 | 1.42 MiB | running image, code at 0x020020 |
 | App bank 1 | 0x18C000-0x2F8000 | 1.42 MiB | OTA target, code at 0x18C020 |
 | VM | 0x2F8000-0x300000 | 32 KiB | vendor VM, auto-placed below TuyaOpen |
-| TuyaOpen | 0x300000-0x3D1000 | 836 KiB | the five partitions below |
-| BTIF | 0x3D1000-0x3D2000 | 4 KiB | vendor BT interface |
-| USER | 0x3D2000-0x3D3000 | 4 KiB | vendor customer reserve |
-| Free | 0x3D3000-0x800000 | 4.18 MiB | unused |
+| TuyaOpen | 0x300000-0x3D1000 | 836 KiB | unchanged |
 
 Each bank opens with a 32-byte header (image CRC, code length) followed by the
 code, which is why `get_current_boot_info()` reports a base address 0x20 past
 the bank start; `get_backup_area_info()` on the running image returns
-0x18C020 / 0x16BFE0.
+0x18C020 / 0x16BFE0. Code plus resources must fit one bank.
 
 `tkl_flash` exposes five partitions inside the TuyaOpen area; erase and write
 outside them return `OPRT_INVALID_PARM`:
@@ -272,7 +284,8 @@ outside them return `OPRT_INVALID_PARM`:
 
 Upgrades:
 
-- **`tkl_ota` drives the vendor dual-bank engine.** `tkl_ota_start_notify()`
+- **`tkl_ota` drives the vendor dual-bank engine** once
+  `CONFIG_JIELI_BOARD_DUAL_BANK` is on. `tkl_ota_start_notify()`
   lifts the flash write protection, calls `dual_bank_passive_update_init()` and
   `dual_bank_update_allow_check()`; `tkl_ota_data_process()` feeds
   `dual_bank_update_write()` in at most 4 KiB chunks (the size the engine
@@ -290,9 +303,9 @@ Upgrades:
   running bank is rejected at the head directory, so bench checks cover the
   engine handshake (init, `allow_check`, head parsing) and the write path,
   while the complete bank switch needs an image from the vendor OTA flow.
-- Turning the board option off brings back the single-bank map
-  (0x000000-0x07F000 boot, 0x07F000-0x300000 application) and a stub-free but
-  unused OTA path.
+- The switch is a build-time choice: turning it on changes the flash map, so a
+  board already in the field should be re-flashed once with the new layout
+  rather than updated into it.
 
 The free area after USER is vendor headroom - nothing allocates it today. It
 would be the natural home for a larger UF if that is ever needed, but enlarging

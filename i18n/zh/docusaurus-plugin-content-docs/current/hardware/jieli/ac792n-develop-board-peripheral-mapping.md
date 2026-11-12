@@ -222,10 +222,24 @@ TKL 一个通道是互补对，而 `TUYA_PWMn` 只能表示一个管脚，语义
 整片 8 MiB flash 由厂商烧录工具按 `isd_config.ini` 划分；其中 TuyaOpen 区声明为
 `TUYAOPEN_ADR=0x300000`、`TUYAOPEN_LEN=0x0D1000`、`OPT=1`，下载或 OTA 都不会擦除它。
 
-板级 Kconfig 里 `CONFIG_JIELI_BOARD_DUAL_BANK` 默认打开，会往暂存的厂商
-`app_config.h` 写入 `CONFIG_DOUBLE_BANK_ENABLE` 和 `CONFIG_SUPPORT_DOUBLE_UBOOT`；
-烧录工具随之输出 `DB_UPDATE_DATA=YES`、`UBOOT_AREA_SIZE=64K,64K`，并自行把
-32 KiB 的 VM 放到 TuyaOpen 下方：
+板级 Kconfig 里 `CONFIG_JIELI_BOARD_DUAL_BANK` 默认关闭，所以现在下载得到的是下面的
+单备份布局。保持关闭的原因是 A/B 布局会把应用区减半到 1.42 MiB，而 chat bot demo 仅
+代码就有 2.46 MiB。
+
+单备份布局（默认）：
+
+| 区域 | 地址范围 | 大小 | 用途 |
+| --- | --- | --- | --- |
+| Boot 镜像 | 0x000000-0x07F000 | 508 KiB | 厂商 `uboot.boot` 与启动参数（`FLASH_BIN_SIZE`） |
+| 应用区 | 0x07F000-0x300000 | 2.5 MiB | 代码与资源（区内 `LAVE_SIZE` 为 0x279000） |
+| TuyaOpen | 0x300000-0x3D1000 | 836 KiB | 下面五个分区 |
+| BTIF | 0x3D1000-0x3D2000 | 4 KiB | 厂商 BT 接口区 |
+| USER | 0x3D2000-0x3D3000 | 4 KiB | 厂商为客户预留区 |
+| 空闲 | 0x3D3000-0x800000 | 4.18 MiB | 未使用 |
+
+打开 `CONFIG_JIELI_BOARD_DUAL_BANK` 会往暂存的厂商 `app_config.h` 写入
+`CONFIG_DOUBLE_BANK_ENABLE` 和 `CONFIG_SUPPORT_DOUBLE_UBOOT`，烧录工具随之输出
+`DB_UPDATE_DATA=YES`、`UBOOT_AREA_SIZE=64K,64K`，按下面这块板实测的 A/B 布局排：
 
 | 区域 | 地址范围 | 大小 | 用途 |
 | --- | --- | --- | --- |
@@ -233,14 +247,11 @@ TKL 一个通道是互补对，而 `TUYA_PWMn` 只能表示一个管脚，语义
 | App bank 0 | 0x020000-0x18C000 | 1.42 MiB | 当前运行镜像，代码在 0x020020 |
 | App bank 1 | 0x18C000-0x2F8000 | 1.42 MiB | OTA 目标区，代码在 0x18C020 |
 | VM | 0x2F8000-0x300000 | 32 KiB | 厂商 VM，自动放在 TuyaOpen 前面 |
-| TuyaOpen | 0x300000-0x3D1000 | 836 KiB | 下面五个分区 |
-| BTIF | 0x3D1000-0x3D2000 | 4 KiB | 厂商 BT 接口区 |
-| USER | 0x3D2000-0x3D3000 | 4 KiB | 厂商为客户预留区 |
-| 空闲 | 0x3D3000-0x800000 | 4.18 MiB | 未使用 |
+| TuyaOpen | 0x300000-0x3D1000 | 836 KiB | 不变 |
 
 每个 bank 开头有 32 字节头（镜像 CRC、代码长度），所以 `get_current_boot_info()`
 报的代码基址比 bank 起始地址大 0x20；在运行镜像上调用 `get_backup_area_info()`
-返回 0x18C020 / 0x16BFE0。
+返回 0x18C020 / 0x16BFE0。代码加资源必须装进一个 bank。
 
 `tkl_flash` 在 TuyaOpen 区内暴露五个分区，越界擦写返回 `OPRT_INVALID_PARM`：
 
@@ -254,7 +265,8 @@ TKL 一个通道是互补对，而 `TUYA_PWMn` 只能表示一个管脚，语义
 
 升级相关：
 
-- **`tkl_ota` 走的是厂商双备份引擎**：`tkl_ota_start_notify()` 解除 flash 写保护，
+- **`tkl_ota` 走的是厂商双备份引擎**（需要先打开上面的
+  `CONFIG_JIELI_BOARD_DUAL_BANK`）：`tkl_ota_start_notify()` 解除 flash 写保护，
   调 `dual_bank_passive_update_init()` 和 `dual_bank_update_allow_check()`；
   `tkl_ota_data_process()` 按引擎上报的缓冲大小（最大 4 KiB）分块调
   `dual_bank_update_write()`；`tkl_ota_end_notify()` 调 `dual_bank_update_verify()`，
