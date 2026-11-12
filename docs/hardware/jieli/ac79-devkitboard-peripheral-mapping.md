@@ -64,9 +64,9 @@ Written into the vendor SDK from `boards/JIELI/AC79_DevKitBoard/Kconfig` and
 
 - TKL UART0 maps to SDK `uart0`; TKL UART1 maps to SDK `uart2`.
 - 8N1, non-zero baud rate, no flow control.
-- WL82 has no UART IRQ-event ioctl, so only transmit works; the TAL / CLI receive
-  path is unavailable. Use the 792 (WL83) board when a bidirectional console is
-  needed.
+- WL82 has no UART IRQ-event ioctl, so the adapter polls the unread-byte count
+  every 10 ms and notifies TAL from a task. The `uart2` ISR is registered on
+  `IRQ_UART2_IDX`; receive has not been checked on hardware yet.
 - UART1 is opt-in (`JIELI_BOARD_UART1_ENABLE`, default `n`): opening SDK `uart2`
   stops the vendor debug console, and PH2 is also the PWM0 output. A board can
   have a second UART or logs, not both.
@@ -82,7 +82,9 @@ Written into the vendor SDK from `boards/JIELI/AC79_DevKitBoard/Kconfig` and
 
 **Changing the pins**: WL82 cannot move one pin at a time - TX and RX are fixed
 pairs and both calls are needed. A single pin, or a pair from different groups,
-returns `OPRT_NOT_SUPPORTED`.
+returns `OPRT_NOT_SUPPORTED`. UART1 has a single group, so
+`JIELI_BOARD_UART1_TX_PIN` / `_RX_PIN` must stay PH2/PH3; the build rejects any
+other pair.
 
 ```c
 tkl_io_pinmux_config(17, TUYA_UART0_TX);   /* group 1 TX -> PB1 */

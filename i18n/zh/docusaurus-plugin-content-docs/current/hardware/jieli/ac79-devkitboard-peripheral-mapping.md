@@ -64,8 +64,8 @@ flash 分区均已用 `examples/peripherals/*` 在本板跑通。
 
 - TKL UART0 对应 SDK `uart0`；TKL UART1 对应 SDK `uart2`。
 - 仅支持 8N1、非零波特率、无流控。
-- WL82 没有 UART 中断事件 ioctl，只有发送可用，TAL / CLI 的接收路径不可用；需要
-  双向控制台请使用 792（WL83）。
+- WL82 没有 UART 中断事件 ioctl，适配层每 10 ms 轮询一次未读字节数，在任务上下文
+  通知 TAL。`uart2` 的 ISR 注册在 `IRQ_UART2_IDX` 上；接收路径尚未在硬件上验证。
 - UART1 默认关闭（`JIELI_BOARD_UART1_ENABLE`，默认 `n`）：打开 SDK `uart2` 会停掉
   厂商调试串口，且 PH2 同时是 PWM0 输出，一块板只能二选一。
 
@@ -79,7 +79,8 @@ flash 分区均已用 `examples/peripherals/*` 在本板跑通。
 | PB3 | 日志串口 TX（厂商，非 TKL） | / | / |
 
 **修改管脚**：WL82 不能单独移动一个管脚，TX / RX 是固定成对的，必须两次调用一起
-下发。只传一个管脚或传入不同组的管脚都会返回 `OPRT_NOT_SUPPORTED`。
+下发。只传一个管脚或传入不同组的管脚都会返回 `OPRT_NOT_SUPPORTED`。UART1 只有一组
+管脚，`JIELI_BOARD_UART1_TX_PIN` / `_RX_PIN` 只能保持 PH2/PH3，其他组合会编译报错。
 
 ```c
 tkl_io_pinmux_config(17, TUYA_UART0_TX);   /* 组 1 TX -> PB1 */
